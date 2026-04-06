@@ -288,6 +288,9 @@
   .tree-cell.t3 { background: #c62828; }
   .tree-cell.t4 { background: #e65100; }
   .tree-cell.t5 { background: #6a1b9a; }
+  
+  .tree-cell.dim { opacity: 0.3 !important; }
+  .tree-cell.active-cell { box-shadow: 0 0 15px rgba(0,212,200,0.8); z-index: 10; border: 2px solid var(--teal); }
 
   /* LOSS TABLE */
   .loss-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -535,6 +538,12 @@
 </div>
 
 <script>
+// ── STATE ──
+let currentCategory = 'All';
+let prevTotalSales = 13000000;
+let prevTotalProfit = 1470000;
+let prevMargin = 11.62;
+
 // ── DATA ──
 const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct'];
 
@@ -600,7 +609,7 @@ const monthlyChart = new Chart(monthCtx, {
 
 // ── CATEGORY CHART ──
 const catCtx = document.getElementById('categoryChart').getContext('2d');
-new Chart(catCtx, {
+const catChart = new Chart(catCtx, {
   type: 'bar',
   data: {
     labels: categoryLabels,
@@ -638,7 +647,7 @@ new Chart(catCtx, {
 
 // ── REGION CHART (horizontal bar) ──
 const regCtx = document.getElementById('regionChart').getContext('2d');
-new Chart(regCtx, {
+const regChart = new Chart(regCtx, {
   type: 'bar',
   data: {
     labels: regionLabels,
@@ -697,7 +706,7 @@ const trendChart = new Chart(trendCtx, {
 
 // ── SEGMENT DONUT ──
 const segCtx = document.getElementById('segmentChart').getContext('2d');
-new Chart(segCtx, {
+const segChart = new Chart(segCtx, {
   type: 'doughnut',
   data: {
     labels: ['Consumer','Corporate','Home Office'],
@@ -736,17 +745,36 @@ function toggleAllMonths(state) {
 }
 
 function updateMonthFilter() {
+  applyFilter();
+}
+
+function applyFilter() {
   const checked = [...document.querySelectorAll('#monthCheckboxes input')]
     .map((cb, i) => cb.checked ? i : -1)
     .filter(i => i >= 0);
 
-  const filteredLabels = checked.map(i => monthsFull[i]).filter(m => months.includes(m));
-  const filteredSales = checked.map(i => monthlySales[i]).filter((_, j) => months.includes(monthsFull[checked[j]]));
-  const filteredProfit = checked.map(i => monthlyProfit[i]).filter((_, j) => months.includes(monthsFull[checked[j]]));
+  const regionFilter = document.getElementById('regionFilter').value;
+  const segFilter = document.getElementById('segFilter').value;
+
+  // Mock scaling for visual cross-filtering impacts
+  let scale = 1.0;
+  if (regionFilter !== 'All') scale *= 0.35 + ((regionFilter.charCodeAt(0) % 5) * 0.05);
+  if (segFilter !== 'All') scale *= 0.4 + ((segFilter.charCodeAt(0) % 5) * 0.05);
+  if (currentCategory !== 'All') {
+    if (currentCategory === 'Technology') scale *= 0.36;
+    if (currentCategory === 'Office Supplies') scale *= 0.29;
+    if (currentCategory === 'Furniture') scale *= 0.34;
+  }
 
   const activeMonths = months.filter((_, i) => checked.includes(i));
-  const activeSales = activeMonths.map((_, i) => monthlySales[months.indexOf(activeMonths[i])]);
-  const activeProfit = activeMonths.map((_, i) => monthlyProfit[months.indexOf(activeMonths[i])]);
+  const activeSales = activeMonths.map((_, i) => monthlySales[months.indexOf(activeMonths[i])] * scale);
+  const activeProfit = activeMonths.map((_, i) => monthlyProfit[months.indexOf(activeMonths[i])] * scale);
+
+  const catScale = categoryProfit.map((v, i) => scale * (0.8 + ((i*3)%5)*0.1));
+  const regScale = regionSales.map((v, i) => scale * (0.8 + ((i*7)%5)*0.1));
+  const rawSeg = [51.48 * (1 + scale*0.2), 30.25 * (1 + scale*0.5), 18.27 * (1 + scale*0.1)];
+  const totalSeg = rawSeg.reduce((a,b)=>a+b, 0);
+  const segScale = rawSeg.map(v => Number(((v/totalSeg)*100).toFixed(2)));
 
   monthlyChart.data.labels = activeMonths;
   monthlyChart.data.datasets[0].data = activeSales;
@@ -757,23 +785,69 @@ function updateMonthFilter() {
   trendChart.data.datasets[0].data = activeSales;
   trendChart.update();
 
+  catChart.data.datasets[0].data = categoryProfit.map((v, i) => v * catScale[i]);
+  catChart.data.datasets[1].data = categoryTotal.map((v, i) => v * catScale[i]);
+  catChart.update();
+  
+  regChart.data.datasets[0].data = regionSales.map((v, i) => v * regScale[i]);
+  regChart.update();
+
+  segChart.data.datasets[0].data = segScale;
+  segChart.update();
+
   const totalSales = activeSales.reduce((a,b) => a+b, 0);
   const totalProfit = activeProfit.reduce((a,b) => a+b, 0);
-  document.getElementById('kpiSales').textContent = totalSales >= 1e6
-    ? (totalSales/1e6).toFixed(1)+'M' : (totalSales/1000).toFixed(0)+'K';
-  document.getElementById('kpiProfit').textContent = totalProfit >= 1e6
-    ? (totalProfit/1e6).toFixed(2)+'M' : (totalProfit/1000).toFixed(0)+'K';
-  const margin = totalSales > 0 ? ((totalProfit/totalSales)*100).toFixed(2)+'%' : '0%';
-  document.getElementById('kpiMargin').textContent = margin;
-}
+  const margin = totalSales > 0 ? (totalProfit/totalSales)*100 : 0;
 
-function applyFilter() {
-  // Visual feedback on filter change
+  animateValue(document.getElementById('kpiSales'), prevTotalSales, totalSales, 800, true);
+  animateValue(document.getElementById('kpiProfit'), prevTotalProfit, totalProfit, 800, true);
+  animateValue(document.getElementById('kpiMargin'), prevMargin, margin, 800, false);
+
+  prevTotalSales = totalSales;
+  prevTotalProfit = totalProfit;
+  prevMargin = margin;
+
   document.querySelectorAll('.kpi-card').forEach(el => {
     el.style.borderColor = 'var(--teal)';
     setTimeout(() => el.style.borderColor = 'var(--border)', 600);
   });
 }
+
+function animateValue(obj, start, end, duration, isMoney) {
+  let startTimestamp = null;
+  const step = (timestamp) => {
+    if (!startTimestamp) startTimestamp = timestamp;
+    const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+    const easeOut = progress * (2 - progress);
+    const current = start + easeOut * (end - start);
+    
+    if (isMoney) {
+      // Custom formatting matching the original
+      obj.textContent = current >= 1e6 ? (current/1e6).toFixed(1)+'M' : (current/1000).toFixed(0)+'K';
+    } else {
+      obj.textContent = current.toFixed(2)+'%';
+    }
+    
+    if (progress < 1) window.requestAnimationFrame(step);
+  };
+  window.requestAnimationFrame(step);
+}
+
+document.querySelectorAll('.tree-cell').forEach(cell => {
+  cell.addEventListener('click', () => {
+    const isAlreadySelected = cell.classList.contains('active-cell');
+    document.querySelectorAll('.tree-cell').forEach(c => c.classList.remove('active-cell', 'dim'));
+    
+    if (isAlreadySelected) {
+      currentCategory = 'All';
+    } else {
+      cell.classList.add('active-cell');
+      document.querySelectorAll('.tree-cell:not(.active-cell)').forEach(c => c.classList.add('dim'));
+      currentCategory = cell.querySelector('div').textContent.trim();
+    }
+    applyFilter();
+  });
+});
 </script>
 </body>
 </html>
